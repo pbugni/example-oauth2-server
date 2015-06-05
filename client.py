@@ -2,8 +2,8 @@ from flask import Flask, url_for, session, request, jsonify
 from flask_oauthlib.client import OAuth
 
 
-CLIENT_ID = 'GbRmKgbSMmlE2NlugMeFfQIba8hoVyBFsWS8Igsq'
-CLIENT_SECRET = 'BfP7jsN8dSsXjGLfTTPiEvarMJOpkZQ2Y7IVVee8X929LfolMV'
+CLIENT_ID = '7duz2iEw0NfPKB4lQcf3tSMgT8q8kDX1fNQLuBFt'
+CLIENT_SECRET = 'nFZdS8WGGyUTmmgsKgShtZ45myJfmha33wk0K2CRAjEgOsPuYH'
 
 
 app = Flask(__name__)
@@ -16,10 +16,10 @@ remote = oauth.remote_app(
     consumer_key=CLIENT_ID,
     consumer_secret=CLIENT_SECRET,
     request_token_params={'scope': 'email'},
-    base_url='http://127.0.0.1:5000/api/',
+    base_url='http://docker-dev-1.cirg.washington.edu:5000/api/',
     request_token_url=None,
-    access_token_url='http://127.0.0.1:5000/oauth/token',
-    authorize_url='http://127.0.0.1:5000/oauth/authorize'
+    access_token_url='http://docker-dev-1.cirg.washington.edu:5000/oauth/token',
+    authorize_url='http://docker-dev-1.cirg.washington.edu:5000/oauth/authorize'
 )
 
 
@@ -28,7 +28,8 @@ def index():
     if 'remote_oauth' in session:
         resp = remote.get('me')
         return jsonify(resp.data)
-    next_url = request.args.get('next') or request.referrer or None
+    #next_url = request.args.get('next') or request.referrer or None
+    next_url = request.args.get('next') or None
     return remote.authorize(
         callback=url_for('authorized', next=next_url, _external=True)
     )
@@ -56,4 +57,4 @@ if __name__ == '__main__':
     import os
     os.environ['DEBUG'] = 'true'
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = 'true'
-    app.run(host='localhost', port=8000)
+    app.run(host='0.0.0.0', port=8000)

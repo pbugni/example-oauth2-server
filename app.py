@@ -1,22 +1,38 @@
 # coding: utf-8
 
+import logging
+
+from authomatic.extras.flask import FlaskAuthomatic
+from authomatic.providers import oauth2
 from datetime import datetime, timedelta
-from flask import Flask
+from flask import Flask, make_response
 from flask import session, request
 from flask import render_template, redirect, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import gen_salt
 from flask_oauthlib.provider import OAuth2Provider
 
+logger = logging.getLogger('authomatic.core')
+logger.addHandler(logging.StreamHandler())
 
 app = Flask(__name__, template_folder='templates')
-app.debug = True
-app.secret_key = 'secret'
-app.config.update({
-    'SQLALCHEMY_DATABASE_URI': 'sqlite:///db.sqlite',
-})
+app.config.from_pyfile('application.cfg', silent=False)
+
 db = SQLAlchemy(app)
 oauth = OAuth2Provider(app)
+
+fa = FlaskAuthomatic(
+    config={
+        'fb': {
+           'class_': oauth2.Facebook,
+           'consumer_key': app.config['CONSUMER_KEY'],
+           'consumer_secret': app.config['CONSUMER_SECRET'],
+           'scope': ['user_about_me', 'email'],
+        },
+    },
+    secret=app.config['SECRET_KEY'],
+    debug=True,
+)
 
 
 class User(db.Model):
@@ -54,6 +70,11 @@ class Client(db.Model):
             return self._default_scopes.split()
         return []
 
+    def validate_redirect_uri(self, redirect_uri):
+        # Chop query string and confirm it's in the list
+        redirect_uri = redirect_uri.split('?')[0]
+        return redirect_uri in self.redirect_uris
+        
 
 class Grant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -116,6 +137,16 @@ class Token(db.Model):
         return []
 
 
+class Assessment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey('user.id')
+    )
+    user = db.relationship('User')
+    assessment_type = db.Column(db.String(40))
+    taken = db.Column(db.DateTime)
+
+
 def current_user():
     if 'id' in session:
         uid = session['id']
@@ -125,17 +156,9 @@ def current_user():
 
 @app.route('/', methods=('GET', 'POST'))
 def home():
-    if request.method == 'POST':
-        username = request.form.get('username')
-        user = User.query.filter_by(username=username).first()
-        if not user:
-            user = User(username=username)
-            db.session.add(user)
-            db.session.commit()
-        session['id'] = user.id
-        return redirect('/')
     user = current_user()
-    return render_template('home.html', user=user)
+    return render_template('home.html', user=user, session=session,
+            cookies=request.cookies)
 
 
 @app.route('/client')
@@ -147,10 +170,9 @@ def client():
         client_id=gen_salt(40),
         client_secret=gen_salt(50),
         _redirect_uris=' '.join([
-            'http://localhost:8000/authorized',
-            'http://127.0.0.1:8000/authorized',
-            'http://127.0.1:8000/authorized',
-            'http://127.1:8000/authorized',
+            'http://docker-dev-1.cirg.washington.edu:8000/authorized',
+            'http://decision-dev.au.truenth.org:8000/authorized',
+            'http://truenth-dev-lr1.cirg.washington.edu:8080/c/login/facebook_connect_oauth',
             ]),
         _default_scopes='email',
         user_id=user.id,
@@ -237,24 +259,64 @@ def authorize(*args, **kwargs):
     user = current_user()
     if not user:
         return redirect('/')
-    if request.method == 'GET':
-        client_id = kwargs.get('client_id')
-        client = Client.query.filter_by(client_id=client_id).first()
-        kwargs['client'] = client
-        kwargs['user'] = user
-        return render_template('authorize.html', **kwargs)
-
-    confirm = request.form.get('confirm', 'no')
-    return confirm == 'yes'
-
+    # Skip confirmation - return true as if user agreed to
+    # let portal give API access to intervetion.
+    return True
 
 @app.route('/api/me')
 @oauth.require_oauth()
 def me():
     user = request.oauth.user
-    return jsonify(username=user.username)
+    return jsonify({'username': user.username, 'email': 'pbugni@uw.edu'})
+
+
+@app.route('/api/assessments')
+@oauth.require_oauth()
+def assessments():
+    addone = Assessment(
+        user_id=request.oauth.user.id,
+        assessment_type='test type',
+        taken=datetime.now())
+    db.session.add(addone)
+    db.session.commit()
+    aments = Assessment.query.filter_by(
+        user_id=request.oauth.user.id
+    )
+    return jsonify(count=aments.count())
+
+@app.route('/login')
+@fa.login('fb')
+def login():
+    user = current_user()
+    if user:
+        return redirect('/')
+    if fa.result:
+        if fa.result.error:
+            return fa.result.error.message
+        elif fa.result.user:
+            if not (fa.result.user.name and fa.result.user.id):
+                fa.result.user.update()
+            # Success - add or pull this user to/from portal store 
+            username = fa.result.user.name
+            user = User.query.filter_by(username=username).first()
+            if not user:
+                user = User(username=username)
+                db.session.add(user)
+                db.session.commit()
+            user_id = user.id
+            session['id'] = user_id
+            session['fa_user_id'] = fa.result.user.id
+            return redirect('/')
+    else:
+        return fa.response
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/')
 
 
 if __name__ == '__main__':
     db.create_all()
-    app.run()
+    app.run(host='0.0.0.0')
