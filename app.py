@@ -154,6 +154,11 @@ def current_user():
     return None
 
 
+@app.route('/terms-of-use', methods=('GET',))
+def termsofuse():
+    return render_template('termsofuse.html')
+
+
 @app.route('/', methods=('GET', 'POST'))
 def home():
     user = current_user()
